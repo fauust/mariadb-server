@@ -7692,9 +7692,9 @@ err:
     TRUE  access denied
 */
 
-bool check_grant_column(THD *thd, GRANT_INFO *grant,
-			const char *db_name, const char *table_name,
-			const char *name, size_t length,  Security_context *sctx)
+bool check_grant_column(THD *thd, GRANT_INFO *grant, const char *db_name,
+                        const char *table_name, const char *name,
+                        size_t length,  Security_context *sctx)
 {
   GRANT_TABLE *grant_table;
   GRANT_TABLE *grant_table_role;
@@ -7788,8 +7788,8 @@ err:
     TRUE  access denied
 */
 
-bool check_column_grant_in_table_ref(THD *thd, TABLE_LIST * table_ref,
-                                     const char *name, size_t length)
+bool check_column_grant_in_table_ref(THD *thd, TABLE_LIST *table_ref,
+                                     Field *field)
 {
   GRANT_INFO *grant;
   const char *db_name;
@@ -7807,7 +7807,8 @@ bool check_column_grant_in_table_ref(THD *thd, TABLE_LIST * table_ref,
     if (table_ref->belong_to_view &&
         thd->lex->sql_command == SQLCOM_SHOW_FIELDS)
     {
-      view_privs= get_column_grant(thd, grant, db_name, table_name, name);
+      view_privs= get_column_grant(thd, grant, db_name, table_name,
+                                   field->field_name.str);
       if (view_privs & VIEW_ANY_ACL)
       {
         table_ref->belong_to_view->allowed_show= TRUE;
@@ -7828,8 +7829,9 @@ bool check_column_grant_in_table_ref(THD *thd, TABLE_LIST * table_ref,
   }
 
   if (grant->want_privilege)
-    return check_grant_column(thd, grant, db_name, table_name, name,
-                              length, sctx);
+    return check_grant_column(thd, grant, db_name, table_name,
+                              field->field_name.str,
+                              field->field_name.length, sctx);
   else
     return FALSE;
 
