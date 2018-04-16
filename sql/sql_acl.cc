@@ -7797,6 +7797,9 @@ bool check_column_grant_in_table_ref(THD *thd, TABLE_LIST *table_ref,
   Security_context *sctx= table_ref->security_ctx ?
                           table_ref->security_ctx : thd->security_ctx;
 
+  if (field->invisible > INVISIBLE_USER)
+    return FALSE;
+
   if (table_ref->view || table_ref->field_translation)
   {
     /* View or derived information schema table. */
@@ -7873,6 +7876,8 @@ bool check_grant_all_columns(THD *thd, ulong want_access_arg,
 
   for (; !fields->end_of_fields(); fields->next())
   {
+    if (fields->field()->invisible > INVISIBLE_USER)
+      continue;
     LEX_CSTRING *field_name= fields->name();
 
     if (table_name != fields->get_table_name())
