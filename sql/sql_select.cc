@@ -1791,9 +1791,12 @@ JOIN::optimize_inner()
 
   if (eq_list.elements != 0)
   {
-    if (join_equalities_after_optimize_cond(this, eq_list))
+    conds= and_new_conditions_to_optimized_cond(thd, conds, &cond_equal,
+                                                eq_list, &cond_value);
+
+    if (!conds &&
+        cond_value != Item::COND_FALSE && cond_value != Item::COND_TRUE)
       DBUG_RETURN(TRUE);
-    conds= conds->remove_eq_conds(thd, &cond_value, true);
   }
 
   if (thd->lex->sql_command == SQLCOM_SELECT &&
