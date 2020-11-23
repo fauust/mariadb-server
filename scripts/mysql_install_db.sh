@@ -453,29 +453,26 @@ then
 fi
 
 # Create database directories
-for dir in "$ldata"
-do
-  if test ! -d "$dir"
+if test ! -d "$ldata"
+then
+  if ! `mkdir -p "$ldata"`
   then
-    if ! `mkdir -p "$dir"`
-    then
-      echo "Fatal error Can't create database directory '$dir'"
-      link_to_help
-      exit 1
-    fi
-    chmod 700 "$dir"
+    echo "Fatal error Can't create database directory '$ldata'"
+    link_to_help
+    exit 1
   fi
-  if test -n "$user"
+  chmod 700 "$ldata"
+fi
+if test -n "$ldatar"
+then
+  chown $user "$ldata"
+  if test $? -ne 0
   then
-    chown $user "$dir"
-    if test $? -ne 0
-    then
-      echo "Cannot change ownership of the database directories to the '$user'"
-      echo "user.  Check that you have the necessary permissions and try again."
-      exit 1
-    fi
+    echo "Cannot change ownership of the database directories to the '$user'"
+    echo "user.  Check that you have the necessary permissions and try again."
+    exit 1
   fi
-done
+fi
 
 if test -n "$user"
 then
