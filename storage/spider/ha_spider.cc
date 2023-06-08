@@ -175,6 +175,7 @@ ha_spider::ha_spider(
 ha_spider::~ha_spider()
 {
   DBUG_ENTER("ha_spider::~ha_spider");
+  DBUG_ENTER("ha_spider::~ha_spider");
   DBUG_PRINT("info",("spider this=%p", this));
   partition_handler = NULL;
   if (wide_handler_owner)
