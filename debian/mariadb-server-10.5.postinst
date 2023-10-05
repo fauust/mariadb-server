@@ -123,7 +123,7 @@ EOF
     if [ ! -d "$mysql_statedir" ] && [ ! -L "$mysql_statedir" ]; then mkdir -Z "$mysql_statedir"; fi
     if [ ! -d "$mysql_datadir"  ] && [ ! -L "$mysql_datadir" ]; then mkdir -Z "$mysql_datadir" ; fi
     if [ ! -d "$mysql_logdir"   ] && [ ! -L "$mysql_logdir"  ]; then mkdir -Z "$mysql_logdir"  ; fi
-    # When creating an ext3 jounal on an already mounted filesystem like e.g.
+    # When creating an ext3 journal on an already mounted filesystem like e.g.
     # /var/lib/mysql, you get a .journal file that is not modifiable by chown.
     # The mysql_statedir must not be writable by the mysql user under any
     # circumstances as it contains scripts that are executed by root.
@@ -222,13 +222,6 @@ EOF
         echo "/usr/sbin/mariadbd { }" | apparmor_parser --remove 2>/dev/null || true
       fi
     fi
-
-    # @TODO: Remove once buildbot.askmonty.org has been updated not to expect this file
-    mkdir -p /etc/systemd/system/mariadb.service.d/
-    # Note that file cannot be empty, otherwise systemd version in Ubuntu Bionic
-    # will think the service is masked
-    echo "# empty placeholder" > /etc/systemd/system/mariadb.service.d/migrated-from-my.cnf-settings.conf
-
   ;;
 
   abort-upgrade|abort-remove|abort-configure)
