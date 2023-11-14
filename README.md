@@ -3,7 +3,7 @@ Code status:
 
 * [![Appveyor CI status](https://ci.appveyor.com/api/projects/status/4u6pexmtpuf8jq66?svg=true)](https://ci.appveyor.com/project/rasmushoj/server) ci.appveyor.com
 
-## MariaDB: The open source relational database 
+## MariaDB: The open source relational database
 
 MariaDB was designed as a drop-in replacement of MySQL(R) with more
 features, new storage engines, fewer bugs, and better performance.
@@ -38,7 +38,7 @@ Help
 
 More help is available from the Maria Discuss mailing list
 https://launchpad.net/~maria-discuss, MariaDB's Zulip
-instance, https://mariadb.zulipchat.com/ 
+instance, https://mariadb.zulipchat.com/
 
 Live QA for beginner contributors
 ----
@@ -53,7 +53,7 @@ Licensing
 
 ***************************************************************************
 
-NOTE: 
+NOTE:
 
 MariaDB is specifically available only under version 2 of the GNU
 General Public License (GPLv2). (I.e. Without the "any later version"
