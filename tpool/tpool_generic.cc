@@ -321,11 +321,11 @@ class thread_pool_generic : public thread_pool
   }
 public:
   thread_pool_generic(int min_threads, int max_threads);
-  ~thread_pool_generic();
+  ~thread_pool_generic() override;
   void wait_begin() override;
   void wait_end() override;
   void submit_task(task *task) override;
-  virtual aio *create_native_aio(int max_io) override
+  aio *create_native_aio(int max_io) override
   {
 #ifdef _WIN32
     return create_win_aio(this, max_io);
@@ -454,13 +454,13 @@ public:
       m_task.wait();
     }
 
-    virtual ~timer_generic()
+    ~timer_generic() override
     {
       disarm();
     }
   };
   timer_generic m_maintenance_timer;
-  virtual timer* create_timer(callback_func func, void *data) override
+  timer* create_timer(callback_func func, void *data) override
   {
     return new timer_generic(func, data, this);
   }
@@ -644,7 +644,7 @@ void thread_pool_generic::check_idle(std::chrono::system_clock::time_point now)
   }
 
   /* Switch timer off after 1 minute of idle time */
-  if (now - idle_since > max_idle_time)
+  if (now - idle_since > max_idle_time && m_active_threads.empty())
   {
     idle_since= invalid_timestamp;
     switch_timer(timer_state_t::OFF);
@@ -743,6 +743,12 @@ bool thread_pool_generic::add_thread()
   if (n_threads >= m_max_threads)
     return false;
 
+  /*
+    Deadlock danger exists, so monitor pool health
+    with maintenance timer.
+  */
+  switch_timer(timer_state_t::ON);
+
   if (n_threads >= m_min_threads)
   {
     auto now = std::chrono::system_clock::now();
@@ -753,8 +759,6 @@ bool thread_pool_generic::add_thread()
         Throttle thread creation and wakeup deadlock detection timer,
         if is it off.
       */
-      switch_timer(timer_state_t::ON);
-
       return false;
     }
   }
@@ -837,6 +841,7 @@ thread_pool_generic::thread_pool_generic(int min_threads, int max_threads) :
 
   // start the timer
   m_maintenance_timer.set_time(0, (int)m_timer_interval.count());
+  m_timer_state = timer_state_t::ON;
 }
 
 

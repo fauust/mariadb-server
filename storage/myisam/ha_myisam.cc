@@ -721,29 +721,32 @@ static void init_compute_vcols(void *table)
 
 static int compute_vcols(MI_INFO *info, uchar *record, int keynum)
 {
+  int error= 0;
   /* This mutex is needed for parallel repair */
   mysql_mutex_lock(&info->s->intern_lock);
   TABLE *table= (TABLE*)(info->external_ref);
-  table->move_fields(table->field, record, table->field[0]->record_ptr());
+  table->move_fields(table->field, record, table->record[0]);
   if (keynum == -1) // update all vcols
   {
-    int error= table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_READ);
+    error= table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_READ);
     if (table->update_virtual_fields(table->file, VCOL_UPDATE_INDEXED))
       error= 1;
-    mysql_mutex_unlock(&info->s->intern_lock);
-    return error;
   }
-  // update only one key
-  KEY *key= table->key_info + keynum;
-  KEY_PART_INFO *kp= key->key_part, *end= kp + key->ext_key_parts;
-  for (; kp < end; kp++)
+  else
   {
-    Field *f= table->field[kp->fieldnr - 1];
-    if (f->vcol_info && !f->vcol_info->stored_in_db)
-      table->update_virtual_field(f, false);
+    // update only one key
+    KEY *key= table->key_info + keynum;
+    KEY_PART_INFO *kp= key->key_part, *end= kp + key->ext_key_parts;
+    for (; kp < end; kp++)
+    {
+      Field *f= table->field[kp->fieldnr - 1];
+      if (f->vcol_info && !f->vcol_info->stored_in_db)
+        table->update_virtual_field(f, false);
+    }
   }
+  table->move_fields(table->field, table->record[0], record);
   mysql_mutex_unlock(&info->s->intern_lock);
-  return 0;
+  return error;
 }
 
 }
@@ -1025,16 +1028,6 @@ void ha_myisam::setup_vcols_for_repair(HA_CHECK *param)
   table->use_all_columns();
 }
 
-void ha_myisam::restore_vcos_after_repair()
-{
-  if (file->s->base.reclength < file->s->vreclength)
-  {
-    table->move_fields(table->field, table->record[0],
-                       table->field[0]->record_ptr());
-    table->default_column_bitmaps();
-  }
-}
-
 int ha_myisam::check(THD* thd, HA_CHECK_OPT* check_opt)
 {
   if (!file) return HA_ADMIN_INTERNAL_ERROR;
@@ -1131,8 +1124,6 @@ int ha_myisam::check(THD* thd, HA_CHECK_OPT* check_opt)
     file->update |= HA_STATE_CHANGED | HA_STATE_ROW_CHANGED;
   }
 
-  restore_vcos_after_repair();
-
   thd_proc_info(thd, old_proc_info);
   return error ? HA_ADMIN_CORRUPT : HA_ADMIN_OK;
 }
@@ -1177,8 +1168,6 @@ int ha_myisam::analyze(THD *thd, HA_CHECK_OPT* check_opt)
   }
   else if (!mi_is_crashed(file) && !thd->killed)
     mi_mark_crashed(file);
-
-  restore_vcos_after_repair();
 
   return error ? HA_ADMIN_CORRUPT : HA_ADMIN_OK;
 }
@@ -1229,8 +1218,6 @@ int ha_myisam::repair(THD* thd, HA_CHECK_OPT *check_opt)
     break;
   }
 
-  restore_vcos_after_repair();
-
   if (!error && start_records != file->state->records &&
       !(check_opt->flags & T_VERY_SILENT))
   {
@@ -1267,8 +1254,6 @@ int ha_myisam::optimize(THD* thd, HA_CHECK_OPT *check_opt)
     param->testflag&= ~T_REP_BY_SORT;
     error= repair(thd,*param,1);
   }
-
-  restore_vcos_after_repair();
 
   return error;
 }
@@ -1569,40 +1554,37 @@ int ha_myisam::preload_keys(THD* thd, HA_CHECK_OPT *check_opt)
 
   SYNOPSIS
     disable_indexes()
-    mode        mode of operation:
-                HA_KEY_SWITCH_NONUNIQ      disable all non-unique keys
-                HA_KEY_SWITCH_ALL          disable all keys
-                HA_KEY_SWITCH_NONUNIQ_SAVE dis. non-uni. and make persistent
-                HA_KEY_SWITCH_ALL_SAVE     dis. all keys and make persistent
 
-  IMPLEMENTATION
-    HA_KEY_SWITCH_NONUNIQ       is not implemented.
-    HA_KEY_SWITCH_ALL_SAVE      is not implemented.
+  DESCRIPTION
+    See handler::ha_disable_indexes()
 
   RETURN
     0  ok
     HA_ERR_WRONG_COMMAND  mode not implemented.
 */
 
-int ha_myisam::disable_indexes(uint mode)
+int ha_myisam::disable_indexes(key_map map, bool persist)
 {
   int error;
 
-  if (mode == HA_KEY_SWITCH_ALL)
+  if (!persist)
   {
     /* call a storage engine function to switch the key map */
+    DBUG_ASSERT(map.is_clear_all());
     error= mi_disable_indexes(file);
-  }
-  else if (mode == HA_KEY_SWITCH_NONUNIQ_SAVE)
-  {
-    mi_extra(file, HA_EXTRA_NO_KEYS, 0);
-    info(HA_STATUS_CONST);                        // Read new key info
-    error= 0;
   }
   else
   {
-    /* mode not implemented */
-    error= HA_ERR_WRONG_COMMAND;
+    ulonglong ullmap= map.to_ulonglong();
+
+    /* make sure auto-inc key is enabled even if it's > 64 */
+    if (map.length() > MI_KEYMAP_BITS &&
+        table->s->next_number_index < MAX_KEY)
+      mi_set_key_active(ullmap, table->s->next_number_index);
+
+    mi_extra(file, HA_EXTRA_NO_KEYS, &ullmap);
+    info(HA_STATUS_CONST);                        // Read new key info
+    error= 0;
   }
   return error;
 }
@@ -1613,21 +1595,14 @@ int ha_myisam::disable_indexes(uint mode)
 
   SYNOPSIS
     enable_indexes()
-    mode        mode of operation:
-                HA_KEY_SWITCH_NONUNIQ      enable all non-unique keys
-                HA_KEY_SWITCH_ALL          enable all keys
-                HA_KEY_SWITCH_NONUNIQ_SAVE en. non-uni. and make persistent
-                HA_KEY_SWITCH_ALL_SAVE     en. all keys and make persistent
 
   DESCRIPTION
     Enable indexes, which might have been disabled by disable_index() before.
-    The modes without _SAVE work only if both data and indexes are empty,
+    If persist=false, it works only if both data and indexes are empty,
     since the MyISAM repair would enable them persistently.
     To be sure in these cases, call handler::delete_all_rows() before.
 
-  IMPLEMENTATION
-    HA_KEY_SWITCH_NONUNIQ       is not implemented.
-    HA_KEY_SWITCH_ALL_SAVE      is not implemented.
+    See also handler::ha_enable_indexes()
 
   RETURN
     0  ok
@@ -1636,7 +1611,7 @@ int ha_myisam::disable_indexes(uint mode)
     HA_ERR_WRONG_COMMAND  mode not implemented.
 */
 
-int ha_myisam::enable_indexes(uint mode)
+int ha_myisam::enable_indexes(key_map map, bool persist)
 {
   int error;
   DBUG_ENTER("ha_myisam::enable_indexes");
@@ -1650,7 +1625,8 @@ int ha_myisam::enable_indexes(uint mode)
     DBUG_RETURN(0);
   }
 
-  if (mode == HA_KEY_SWITCH_ALL)
+  DBUG_ASSERT(map.is_prefix(table->s->keys));
+  if (!persist)
   {
     error= mi_enable_indexes(file);
     /*
@@ -1659,7 +1635,7 @@ int ha_myisam::enable_indexes(uint mode)
        but mode==HA_KEY_SWITCH_ALL forbids it.
     */
   }
-  else if (mode == HA_KEY_SWITCH_NONUNIQ_SAVE)
+  else
   {
     THD *thd= table->in_use;
     int was_error= thd->is_error();
@@ -1716,13 +1692,6 @@ int ha_myisam::enable_indexes(uint mode)
     }
     info(HA_STATUS_CONST);
     thd_proc_info(thd, save_proc_info);
-
-    restore_vcos_after_repair();
-  }
-  else
-  {
-    /* mode not implemented */
-    error= HA_ERR_WRONG_COMMAND;
   }
   DBUG_RETURN(error);
 }
@@ -1886,7 +1855,7 @@ int ha_myisam::end_bulk_insert()
         setting the indexes as active and  trying to recreate them. 
      */
    
-      if (((first_error= enable_indexes(HA_KEY_SWITCH_NONUNIQ_SAVE)) != 0) && 
+      if (((first_error= enable_indexes(key_map(table->s->keys), true))) &&
           table->in_use->killed)
       {
         delete_all_rows();

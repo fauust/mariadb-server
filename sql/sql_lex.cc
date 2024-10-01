@@ -3023,6 +3023,7 @@ void st_select_lex::init_query()
   olap= UNSPECIFIED_OLAP_TYPE;
   having_fix_field= 0;
   having_fix_field_for_pushed_cond= 0;
+  leaf_tables_saved= false;
   context.select_lex= this;
   context.init();
   cond_count= between_count= with_wild= 0;
@@ -10902,7 +10903,11 @@ void mark_or_conds_to_avoid_pushdown(Item *cond)
        (if cond is marked with FULL_EXTRACTION_FL or
            cond is an AND condition and some of its parts are marked with
            FULL_EXTRACTION_FL)
-       In this case condition is transformed and pushed into attach_to_conds
+
+       In this case condition is transformed with multiple_equality_transformer
+       transformer. It transforms all multiple equalities in the extracted
+       condition into the set of equalities.
+       After that the transformed condition is attached into attach_to_conds
        list.
     2. Part of some other condition c1 that can't be entirely pushed
        (if с1 isn't marked with any flag).
@@ -10918,10 +10923,6 @@ void mark_or_conds_to_avoid_pushdown(Item *cond)
 
        In this case build_pushable_cond() is called for c1.
        This method builds a clone of the c1 part that can be pushed.
-
-    Transformation mentioned above is made with multiple_equality_transformer
-    transformer. It transforms all multiple equalities in the extracted
-    condition into the set of equalities.
 
   @note
     Conditions that can be pushed are collected in attach_to_conds in this way:
@@ -11333,6 +11334,19 @@ Item *st_select_lex::pushdown_from_having_into_where(THD *thd, Item *having)
 
     if (item->walk(&Item::cleanup_excluding_immutables_processor, 0, STOP_PTR)
         || item->fix_fields(thd, NULL))
+    {
+      attach_to_conds.empty();
+      goto exit;
+    }
+  }
+
+  /*
+    Remove IMMUTABLE_FL only after all of the elements of the condition are processed.
+  */
+  it.rewind();
+  while ((item=it++))
+  {
+    if (item->walk(&Item::remove_immutable_flag_processor, 0, STOP_PTR))
     {
       attach_to_conds.empty();
       goto exit;

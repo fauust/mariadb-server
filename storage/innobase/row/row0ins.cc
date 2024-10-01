@@ -903,10 +903,10 @@ row_ins_foreign_fill_virtual(
 		return DB_OUT_OF_MEMORY;
 	}
 	ut_ad(!node->is_delete
-	      || (foreign->type & DICT_FOREIGN_ON_DELETE_SET_NULL));
-	ut_ad(foreign->type & (DICT_FOREIGN_ON_DELETE_SET_NULL
-			       | DICT_FOREIGN_ON_UPDATE_SET_NULL
-			       | DICT_FOREIGN_ON_UPDATE_CASCADE));
+	      || (foreign->type & foreign->DELETE_SET_NULL));
+	ut_ad(foreign->type & (foreign->DELETE_SET_NULL
+			       | foreign->UPDATE_SET_NULL
+			       | foreign->UPDATE_CASCADE));
 
 	for (uint16_t i = 0; i < n_v_fld; i++) {
 
@@ -1021,8 +1021,8 @@ row_ins_foreign_check_on_constraint(
 	node = static_cast<upd_node_t*>(thr->run_node);
 
 	if (node->is_delete && 0 == (foreign->type
-				     & (DICT_FOREIGN_ON_DELETE_CASCADE
-					| DICT_FOREIGN_ON_DELETE_SET_NULL))) {
+				     & (foreign->DELETE_CASCADE
+					| foreign->DELETE_SET_NULL))) {
 
 		row_ins_foreign_report_err("Trying to delete",
 					   thr, foreign,
@@ -1032,8 +1032,8 @@ row_ins_foreign_check_on_constraint(
 	}
 
 	if (!node->is_delete && 0 == (foreign->type
-				      & (DICT_FOREIGN_ON_UPDATE_CASCADE
-					 | DICT_FOREIGN_ON_UPDATE_SET_NULL))) {
+				      & (foreign->UPDATE_CASCADE
+					 | foreign->UPDATE_SET_NULL))) {
 
 		/* This is an UPDATE */
 
@@ -1056,7 +1056,7 @@ row_ins_foreign_check_on_constraint(
 	cascade->foreign = foreign;
 
 	if (node->is_delete
-	    && (foreign->type & DICT_FOREIGN_ON_DELETE_CASCADE)) {
+	    && (foreign->type & foreign->DELETE_CASCADE)) {
 		cascade->is_delete = PLAIN_DELETE;
 	} else {
 		cascade->is_delete = NO_DELETE;
@@ -1199,8 +1199,8 @@ row_ins_foreign_check_on_constraint(
 	}
 
 	if (node->is_delete
-	    ? (foreign->type & DICT_FOREIGN_ON_DELETE_SET_NULL)
-	    : (foreign->type & DICT_FOREIGN_ON_UPDATE_SET_NULL)) {
+	    ? (foreign->type & foreign->DELETE_SET_NULL)
+	    : (foreign->type & foreign->UPDATE_SET_NULL)) {
 		/* Build the appropriate update vector which sets
 		foreign->n_fields first fields in rec to SQL NULL */
 
@@ -1245,12 +1245,12 @@ row_ins_foreign_check_on_constraint(
 		}
 	} else if (table->fts && cascade->is_delete == PLAIN_DELETE
 		   && foreign->affects_fulltext()) {
-		/* DICT_FOREIGN_ON_DELETE_CASCADE case */
+		/* dict_foreign_t::DELETE_CASCADE case */
 		fts_trx_add_op(trx, table, doc_id, FTS_DELETE, NULL);
 	}
 
 	if (!node->is_delete
-	    && (foreign->type & DICT_FOREIGN_ON_UPDATE_CASCADE)) {
+	    && (foreign->type & foreign->UPDATE_CASCADE)) {
 
 		/* Build the appropriate update vector which sets changing
 		foreign->n_fields first fields in rec to new values */
@@ -2037,7 +2037,7 @@ row_ins_dupl_error_with_rec(
 	/* In a unique secondary index we allow equal key values if they
 	contain SQL NULLs */
 
-	if (!dict_index_is_clust(index) && !index->nulls_equal) {
+	if (!dict_index_is_clust(index)) {
 
 		for (i = 0; i < n_unique; i++) {
 			if (dfield_is_null(dtuple_get_nth_field(entry, i))) {
@@ -2142,16 +2142,8 @@ row_ins_scan_sec_index_for_duplicate(
 	/* If the secondary index is unique, but one of the fields in the
 	n_unique first fields is NULL, a unique key violation cannot occur,
 	since we define NULL != NULL in this case */
-
-	if (!index->nulls_equal) {
-		for (ulint i = 0; i < n_unique; i++) {
-			if (UNIV_SQL_NULL == dfield_get_len(
-					dtuple_get_nth_field(entry, i))) {
-
-				DBUG_RETURN(DB_SUCCESS);
-			}
-		}
-	}
+	if (index->n_nullable && dtuple_contains_null(entry, n_unique))
+		DBUG_RETURN(DB_SUCCESS);
 
 	/* Store old value on n_fields_cmp */
 
@@ -3051,13 +3043,8 @@ row_ins_sec_index_entry_low(
 
 	if (err != DB_SUCCESS) {
 		if (err == DB_DECRYPTION_FAILED) {
-			ib_push_warning(thr_get_trx(thr)->mysql_thd,
-				DB_DECRYPTION_FAILED,
-				"Table %s is encrypted but encryption service or"
-				" used key_id is not available. "
-				" Can't continue reading table.",
-				index->table->name.m_name);
-			index->table->file_unreadable = true;
+			innodb_decryption_failed(thr_get_trx(thr)->mysql_thd,
+						 index->table);
 		}
 		goto func_exit;
 	}

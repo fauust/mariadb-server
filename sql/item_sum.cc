@@ -177,7 +177,11 @@ bool Item_sum::check_sum_func(THD *thd, Item **ref)
   }
 
   if (window_func_sum_expr_flag)
+  {
+    thd->lex->in_sum_func= in_sum_func;
     return false;
+  }
+
   /*  
     The value of max_arg_level is updated if an argument of the set function
     contains a column reference resolved  against a subquery whose level is
@@ -4587,7 +4591,7 @@ void Item_func_group_concat::print(String *str, enum_query_type query_type)
   if (sum_func() == GROUP_CONCAT_FUNC)
   {
     str->append(STRING_WITH_LEN(" separator \'"));
-    str->append_for_single_quote(separator->ptr(), separator->length());
+    str->append_for_single_quote_opt_convert(*separator);
     str->append(STRING_WITH_LEN("\'"));
   }
 

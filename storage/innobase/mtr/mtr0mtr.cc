@@ -572,7 +572,6 @@ void mtr_t::commit_shrink(fil_space_t &space)
   ut_ad(!is_inside_ibuf());
   ut_ad(!high_level_read_only);
   ut_ad(m_modifications);
-  ut_ad(m_made_dirty);
   ut_ad(!recv_recovery_is_on());
   ut_ad(m_log_mode == MTR_LOG_ALL);
   ut_ad(UT_LIST_GET_LEN(space.chain) == 1);
@@ -926,7 +925,7 @@ static mtr_t::page_flush_ahead log_close(lsn_t lsn)
                       " last checkpoint LSN=" LSN_PF ", current LSN=" LSN_PF
                       "%s.",
                       lsn_t{log_sys.last_checkpoint_lsn}, lsn,
-                      srv_shutdown_state != SRV_SHUTDOWN_INITIATED
+                      srv_shutdown_state > SRV_SHUTDOWN_INITIATED
                       ? ". Shutdown is in progress" : "");
     }
   }

@@ -82,7 +82,9 @@ wsrep_get_apply_format(THD* thd)
   return thd->wsrep_rgi->rli->relay_log.description_event_for_exec;
 }
 
-void wsrep_store_error(const THD* const thd, wsrep::mutable_buffer& dst)
+void wsrep_store_error(const THD* const thd,
+                       wsrep::mutable_buffer& dst,
+                       bool const include_msg)
 {
   Diagnostics_area::Sql_condition_iterator it=
     thd->get_stmt_da()->sql_conditions();
@@ -100,8 +102,16 @@ void wsrep_store_error(const THD* const thd, wsrep::mutable_buffer& dst)
     uint const err_code= cond->get_sql_errno();
     const char* const err_str= cond->get_message_text();
 
-    slider+= my_snprintf(slider, buf_end - slider, " %s, Error_code: %d;",
-                         err_str, err_code);
+    if (include_msg)
+    {
+      slider+= snprintf(slider, buf_end - slider, " %s, Error_code: %d;",
+                        err_str, err_code);
+    }
+    else
+    {
+      slider+= snprintf(slider, buf_end - slider, " Error_code: %d;",
+                        err_code);
+    }
   }
 
   if (slider != dst.data())
@@ -177,8 +187,7 @@ int wsrep_apply_events(THD*        thd,
       break;
     }
 
-
-    if (!thd->variables.gtid_seq_no && wsrep_thd_is_toi(thd) && 
+    if (!thd->variables.gtid_seq_no && wsrep_thd_is_toi(thd) &&
         (ev->get_type_code() == QUERY_EVENT))
     { 
       uint64 seqno= wsrep_gtid_server.seqno_inc();
@@ -188,18 +197,10 @@ int wsrep_apply_events(THD*        thd,
         thd->variables.gtid_seq_no= seqno;
       }
     }
+
     /* Use the original server id for logging. */
     thd->set_server_id(ev->server_id);
-    thd->set_time();                            // time the query
-    thd->transaction->start_time.reset(thd);
     thd->lex->current_select= 0;
-    if (!ev->when)
-    {
-      my_hrtime_t hrtime= my_hrtime();
-      ev->when= hrtime_to_my_time(hrtime);
-      ev->when_sec_part= hrtime_sec_part(hrtime);
-    }
-
     thd->variables.option_bits=
       (thd->variables.option_bits & ~OPTION_SKIP_REPLICATION) |
       (ev->flags & LOG_EVENT_SKIP_REPLICATION_F ?  OPTION_SKIP_REPLICATION : 0);

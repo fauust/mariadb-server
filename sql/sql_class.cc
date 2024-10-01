@@ -855,7 +855,7 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
   my_hash_init(key_memory_user_var_entry, &user_vars, system_charset_info,
                USER_VARS_HASH_SIZE, 0, 0, (my_hash_get_key) get_var_key,
                (my_hash_free_key) free_user_var, HASH_THREAD_SPECIFIC);
-  my_hash_init(PSI_INSTRUMENT_ME, &sequences, system_charset_info,
+  my_hash_init(PSI_INSTRUMENT_ME, &sequences, Lex_ident_fs::charset_info(),
                SEQUENCES_HASH_SIZE, 0, 0, (my_hash_get_key)
                get_sequence_last_key, (my_hash_free_key) free_sequence_last,
                HASH_THREAD_SPECIFIC);
@@ -892,6 +892,7 @@ THD::THD(my_thread_id id, bool is_wsrep_applier)
   prepare_derived_at_open= FALSE;
   create_tmp_table_for_derived= FALSE;
   save_prep_leaf_list= FALSE;
+  reset_sp_cache= false;
   org_charset= 0;
   /* Restore THR_THD */
   set_current_thd(old_THR_THD);
@@ -1449,7 +1450,8 @@ void THD::change_user(void)
   my_hash_init(key_memory_user_var_entry, &user_vars, system_charset_info,
                USER_VARS_HASH_SIZE, 0, 0, (my_hash_get_key) get_var_key,
                (my_hash_free_key) free_user_var, HASH_THREAD_SPECIFIC);
-  my_hash_init(key_memory_user_var_entry, &sequences, system_charset_info,
+  my_hash_init(key_memory_user_var_entry, &sequences,
+               Lex_ident_fs::charset_info(),
                SEQUENCES_HASH_SIZE, 0, 0, (my_hash_get_key)
                get_sequence_last_key, (my_hash_free_key) free_sequence_last,
                HASH_THREAD_SPECIFIC);
@@ -2520,6 +2522,8 @@ bool THD::copy_with_error(CHARSET_INFO *dstcs, LEX_STRING *dst,
                           CHARSET_INFO *srccs,
                           const char *src, size_t src_length)
 {
+  // Don't allow NULL to avoid UB in the called functions: nullptr+0
+  DBUG_ASSERT(src);
   String_copier_with_error status;
   return copy_fix(dstcs, dst, srccs, src, src_length, &status) ||
          status.check_errors(srccs, src, src_length);
@@ -6366,6 +6370,24 @@ int THD::decide_logging_format(TABLE_LIST *tables)
                           wsrep_forced_binlog_format == BINLOG_FORMAT_STMT ?
                           "STMT" : "MIXED");
     }
+    set_current_stmt_binlog_format_row();
+  }
+
+  /* If user has requested binlog_format STMT OR MIXED
+     in CREATE TABLE [SELECT|REPLACE] we will fall back
+     to ROW.
+
+     Note that we can't use local binlog_format variable
+     here because wsrep_binlog_format sets it to ROW.
+  */
+  if (wsrep_ctas && variables.binlog_format != BINLOG_FORMAT_ROW)
+  {
+    push_warning_printf(this, Sql_condition::WARN_LEVEL_WARN,
+                        ER_UNKNOWN_ERROR,
+                        "Galera does not support binlog_format = %s "
+                        "in CREATE TABLE [SELECT|REPLACE] forcing ROW",
+                        binlog_format == BINLOG_FORMAT_STMT ?
+                        "STMT" : "MIXED");
     set_current_stmt_binlog_format_row();
   }
 #endif /* WITH_WSREP */

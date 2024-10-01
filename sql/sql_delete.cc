@@ -500,6 +500,12 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
     if (thd->lex->describe || thd->lex->analyze_stmt)
       goto produce_explain_and_leave;
 
+    if (!thd->lex->current_select->leaf_tables_saved)
+    {
+      thd->lex->current_select->save_leaf_tables(thd);
+      thd->lex->current_select->leaf_tables_saved= true;
+    }
+
     my_ok(thd, 0);
     DBUG_RETURN(0);
   }
@@ -530,6 +536,13 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
     */
     if (unlikely(thd->is_error()))
       DBUG_RETURN(TRUE);
+
+    if (!thd->lex->current_select->leaf_tables_saved)
+    {
+      thd->lex->current_select->save_leaf_tables(thd);
+      thd->lex->current_select->leaf_tables_saved= true;
+    }
+
     my_ok(thd, 0);
     DBUG_RETURN(0);				// Nothing to delete
   }
@@ -796,13 +809,17 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
                                               delete_history);
     if (delete_record)
     {
+      void *save_bulk_param= thd->bulk_param;
+      thd->bulk_param= nullptr;
       if (!delete_history && table->triggers &&
           table->triggers->process_triggers(thd, TRG_EVENT_DELETE,
                                             TRG_ACTION_BEFORE, FALSE))
       {
         error= 1;
+        thd->bulk_param= save_bulk_param;
         break;
       }
+      thd->bulk_param= save_bulk_param;
 
       // no LIMIT / OFFSET
       if (returning && result->send_data(returning->item_list) < 0)
@@ -833,13 +850,16 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       if (likely(!error))
       {
 	deleted++;
+	thd->bulk_param= nullptr;
         if (!delete_history && table->triggers &&
             table->triggers->process_triggers(thd, TRG_EVENT_DELETE,
                                               TRG_ACTION_AFTER, FALSE))
         {
           error= 1;
+          thd->bulk_param= save_bulk_param;
           break;
         }
+        thd->bulk_param= save_bulk_param;
 	if (!--limit && using_limit)
 	{
 	  error= -1;
@@ -895,10 +915,10 @@ cleanup:
     query_cache_invalidate3(thd, table_list, 1);
   }
 
-  if (thd->lex->current_select->first_cond_optimization)
+  if (!thd->lex->current_select->leaf_tables_saved)
   {
     thd->lex->current_select->save_leaf_tables(thd);
-    thd->lex->current_select->first_cond_optimization= 0;
+    thd->lex->current_select->leaf_tables_saved= true;
   }
 
   delete deltempfile;

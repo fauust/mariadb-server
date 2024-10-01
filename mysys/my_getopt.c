@@ -133,7 +133,7 @@ double getopt_ulonglong2double(ulonglong v)
   return u.dbl;
 }
 
-#define SET_HO_ERROR_AND_CONTINUE(e) { ho_error= (e); continue; }
+#define SET_HO_ERROR_AND_CONTINUE(e) { ho_error= (e); (*argc)--; continue; }
 
 /**
   Handle command line options.
@@ -802,15 +802,21 @@ static int setval(const struct my_option *opts, void *value, char *argument,
       *((ulonglong*)value)= find_typeset(argument, opts->typelib, &err);
       if (err)
       {
-        /* Accept an integer representation of the set */
-        char *endptr;
-        ulonglong arg= (ulonglong) strtol(argument, &endptr, 10);
-        if (*endptr || (arg >> 1) >= (1ULL << (opts->typelib->count-1)))
+        /* Check if option 'all' is used (to set all bits) */
+        if (!my_strcasecmp(&my_charset_latin1, argument, "all"))
+          *(ulonglong*) value= ((1ULL << opts->typelib->count) - 1);
+        else
         {
-          res= EXIT_ARGUMENT_INVALID;
-          goto ret;
-        };
-        *(ulonglong*)value= arg;
+          /* Accept an integer representation of the set */
+          char *endptr;
+          ulonglong arg= (ulonglong) strtol(argument, &endptr, 10);
+          if (*endptr || (arg >> 1) >= (1ULL << (opts->typelib->count-1)))
+          {
+            res= EXIT_ARGUMENT_INVALID;
+            goto ret;
+          };
+          *(ulonglong*)value= arg;
+        }
         err= 0;
       }
       break;
@@ -858,7 +864,7 @@ static int setval(const struct my_option *opts, void *value, char *argument,
     }
     if (err)
     {
-      res= EXIT_UNKNOWN_SUFFIX;
+      res= err;
       goto ret;
     };
   }
@@ -992,7 +998,7 @@ static inline ulonglong eval_num_suffix(char *suffix, int *error)
   case 'E':
     return 1ULL << 60;
   default:
-    *error= 1;
+    *error= EXIT_UNKNOWN_SUFFIX;
     return 0ULL;
   }
 }
@@ -1018,15 +1024,16 @@ static longlong eval_num_suffix_ll(char *argument,
   if (errno == ERANGE)
   {
     my_getopt_error_reporter(ERROR_LEVEL,
-                             "Incorrect integer value: '%s'", argument);
-    *error= 1;
+                             "Integer value out of range for int64: '%s'", argument);
+    *error= EXIT_ARGUMENT_INVALID;
     DBUG_RETURN(0);
   }
   num*= eval_num_suffix(endchar, error);
   if (*error)
-    fprintf(stderr,
-	    "Unknown suffix '%c' used for variable '%s' (value '%s')\n",
-	    *endchar, option_name, argument);
+    my_getopt_error_reporter(ERROR_LEVEL,
+                             "Unknown suffix '%c' used for variable '%s' (value '%s'). "
+                             "Legal suffix characters are: K, M, G, T, P, E",
+                             *endchar, option_name, argument);
   DBUG_RETURN(num);
 }
 
@@ -1050,15 +1057,16 @@ static ulonglong eval_num_suffix_ull(char *argument,
   if (errno == ERANGE)
   {
     my_getopt_error_reporter(ERROR_LEVEL,
-                             "Incorrect integer value: '%s'", argument);
-    *error= 1;
+                             "Integer value out of range for uint64: '%s'", argument);
+    *error= EXIT_ARGUMENT_INVALID;
     DBUG_RETURN(0);
   }
   num*= eval_num_suffix(endchar, error);
   if (*error)
-    fprintf(stderr,
-	    "Unknown suffix '%c' used for variable '%s' (value '%s')\n",
-	    *endchar, option_name, argument);
+    my_getopt_error_reporter(ERROR_LEVEL,
+                             "Unknown suffix '%c' used for variable '%s' (value '%s'). "
+                             "Legal suffix characters are: K, M, G, T, P, E",
+                             *endchar, option_name, argument);
   DBUG_RETURN(num);
 }
 
@@ -1077,6 +1085,8 @@ static ulonglong eval_num_suffix_ull(char *argument,
 static longlong getopt_ll(char *arg, const struct my_option *optp, int *err)
 {
   longlong num=eval_num_suffix_ll(arg, err, (char*) optp->name);
+  if (*err)
+    return(0);
   return getopt_ll_limit_value(num, optp, NULL);
 }
 
@@ -1154,6 +1164,8 @@ longlong getopt_ll_limit_value(longlong num, const struct my_option *optp,
 static ulonglong getopt_ull(char *arg, const struct my_option *optp, int *err)
 {
   ulonglong num= eval_num_suffix_ull(arg, err, (char*) optp->name);
+  if (*err)
+    return(0);
   return getopt_ull_limit_value(num, optp, NULL);
 }
 
