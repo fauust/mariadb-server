@@ -310,13 +310,18 @@ FILE(GLOB compat101 RELATIVE ${CMAKE_SOURCE_DIR}
 IF(compat53 AND compat101)
   FOREACH(compat_rpm "${compat53}" "${compat101}")
     MESSAGE("Using ${compat_rpm} to build MariaDB-compat")
+    MESSAGE("Working MWORKING_DIRECTORY \$ENV{DESTDIR}")
     INSTALL(CODE "EXECUTE_PROCESS(
                    COMMAND rpm2cpio ${CMAKE_SOURCE_DIR}/${compat_rpm}
-                   COMMAND cpio --extract --make-directories */libmysqlclient*.so.* -
-                   WORKING_DIRECTORY \$ENV{DESTDIR})
+                   COMMAND cpio --verbose --extract --make-directories */libmysqlclient*.so.* -
+                   WORKING_DIRECTORY \$ENV{DESTDIR}
+	           ECHO_OUTPUT_VARIABLE
+	           ECHO_ERROR_VARIABLE)
                   EXECUTE_PROCESS(
                    COMMAND chmod -R a+rX .
-                   WORKING_DIRECTORY \$ENV{DESTDIR})"
+                   WORKING_DIRECTORY \$ENV{DESTDIR}
+		   ECHO_OUTPUT_VARIABLE
+		   ECHO_ERROR_VARIABLE)"
                    COMPONENT Compat)
   ENDFOREACH()
 
