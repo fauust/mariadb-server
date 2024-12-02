@@ -2,7 +2,7 @@
 
 * [![Appveyor CI status](https://ci.appveyor.com/api/projects/status/4u6pexmtpuf8jq66?svg=true)](https://ci.appveyor.com/project/rasmushoj/server) ci.appveyor.com
 
-## MariaDB: The innovative open source database. Debug charset/collation failure [1]
+## MariaDB: The innovative open source database. Debug charset/collation failure [2]
 
 MariaDB was designed as a drop-in replacement of MySQL(R) with more
 features, new storage engines, fewer bugs, and better performance.
