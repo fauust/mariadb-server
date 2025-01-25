@@ -1313,7 +1313,6 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables,
   char path[FN_REFLEN + 1];
   LEX_CSTRING alias= null_clex_str;
   LEX_CUSTRING version;
-  LEX_CSTRING partition_engine_name= {NULL, 0};
   StringBuffer<160> unknown_tables(system_charset_info);
   DDL_LOG_STATE local_ddl_log_state;
   const char *comment_start;
@@ -1400,6 +1399,7 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables,
     const LEX_CSTRING db= table->db;
     const LEX_CSTRING table_name= table->table_name;
     LEX_CSTRING cpath= {0,0};
+    LEX_CSTRING partition_engine_name= {NULL, 0};
     handlerton *hton= 0;
     Table_type table_type;
     size_t path_length= 0;
@@ -7303,7 +7303,16 @@ bool mysql_compare_tables(TABLE *table, Alter_info *alter_info,
     DBUG_RETURN(1);
 
   /* Some very basic checks. */
-  if (table->s->fields != alter_info->create_list.elements ||
+  uint fields= table->s->fields;
+
+  /* There is no field count on fully-invisible fields, count them. */
+  for (Field **f_ptr= table->field; *f_ptr; f_ptr++)
+  {
+    if ((*f_ptr)->invisible >= INVISIBLE_FULL)
+      fields--;
+  }
+
+  if (fields != alter_info->create_list.elements ||
       table->s->db_type() != create_info->db_type ||
       table->s->tmp_table ||
       (table->s->row_type != create_info->row_type))
@@ -7314,6 +7323,9 @@ bool mysql_compare_tables(TABLE *table, Alter_info *alter_info,
   for (Field **f_ptr= table->field; *f_ptr; f_ptr++)
   {
     Field *field= *f_ptr;
+    /* Skip hidden generated field like long hash index. */
+    if (field->invisible >= INVISIBLE_SYSTEM)
+      continue;
     Create_field *tmp_new_field= tmp_new_field_it++;
 
     /* Check that NULL behavior is the same. */
@@ -7325,8 +7337,12 @@ bool mysql_compare_tables(TABLE *table, Alter_info *alter_info,
     {
       if (!tmp_new_field->field->vcol_info)
         DBUG_RETURN(false);
-      if (!field->vcol_info->is_equal(tmp_new_field->field->vcol_info))
+      bool err;
+      if (!field->vcol_info->is_equivalent(thd, table->s, create_info->table->s,
+                                           tmp_new_field->field->vcol_info, err))
         DBUG_RETURN(false);
+      if (err)
+        DBUG_RETURN(true);
     }
 
     /*
@@ -7362,13 +7378,13 @@ bool mysql_compare_tables(TABLE *table, Alter_info *alter_info,
     DBUG_RETURN(false);
 
   /* Go through keys and check if they are compatible. */
-  KEY *table_key;
-  KEY *table_key_end= table->key_info + table->s->keys;
+  KEY *table_key= table->s->key_info;
+  KEY *table_key_end= table_key + table->s->keys;
   KEY *new_key;
   KEY *new_key_end= key_info_buffer + key_count;
 
   /* Step through all keys of the first table and search matching keys. */
-  for (table_key= table->key_info; table_key < table_key_end; table_key++)
+  for (; table_key < table_key_end; table_key++)
   {
     /* Search a key with the same name. */
     for (new_key= key_info_buffer; new_key < new_key_end; new_key++)
@@ -7412,7 +7428,7 @@ bool mysql_compare_tables(TABLE *table, Alter_info *alter_info,
   for (new_key= key_info_buffer; new_key < new_key_end; new_key++)
   {
     /* Search a key with the same name. */
-    for (table_key= table->key_info; table_key < table_key_end; table_key++)
+    for (table_key= table->s->key_info; table_key < table_key_end; table_key++)
     {
       if (!lex_string_cmp(system_charset_info, &table_key->name,
                           &new_key->name))
@@ -8962,7 +8978,14 @@ mysql_prepare_alter_table(THD *thd, TABLE *table,
       LEX_CSTRING tmp_name;
       bzero((char*) &key_create_info, sizeof(key_create_info));
       if (key_info->algorithm == HA_KEY_ALG_LONG_HASH)
-        key_info->algorithm= HA_KEY_ALG_UNDEF;
+        key_info->algorithm= alter_ctx->fast_alter_partition ?
+          HA_KEY_ALG_HASH : HA_KEY_ALG_UNDEF;
+      /*
+        For fast alter partition we set HA_KEY_ALG_HASH above to make sure it
+        doesn't lose the hash property.
+        Otherwise we let mysql_prepare_create_table() decide if the hash field
+        is needed depending on the (possibly changed) data types.
+      */
       key_create_info.algorithm= key_info->algorithm;
       /*
         We copy block size directly as some engines, like Area, sets this
@@ -9384,6 +9407,7 @@ fk_check_column_changes(THD *thd, const TABLE *table,
 
   *bad_column_name= NULL;
   enum fk_column_change_type result= FK_COLUMN_NO_CHANGE;
+  bool strict_mode= thd->is_strict_mode();
 
   while ((column= column_it++))
   {
@@ -9429,7 +9453,7 @@ fk_check_column_changes(THD *thd, const TABLE *table,
         goto func_exit;
       }
 
-      if (old_field_not_null != new_field_not_null)
+      if (strict_mode && old_field_not_null != new_field_not_null)
       {
         if (referenced && !new_field_not_null)
         {
@@ -10365,7 +10389,6 @@ bool mysql_alter_table(THD *thd, const LEX_CSTRING *new_db,
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   bool partition_changed= false;
-  bool fast_alter_partition= false;
 #endif
   bool partial_alter= false;
   /*
@@ -10947,7 +10970,7 @@ do_continue:;
       Partitioning: part_info is prepared and returned via thd->work_part_info
     */
     if (prep_alter_part_table(thd, table, alter_info, create_info,
-                              &partition_changed, &fast_alter_partition))
+                        &partition_changed, &alter_ctx.fast_alter_partition))
     {
       DBUG_RETURN(true);
     }
@@ -10984,7 +11007,7 @@ do_continue:;
     Note, one can run a separate "ALTER TABLE t1 FORCE;" statement
     before or after the partition change ALTER statement to upgrade data types.
   */
-  if (IF_PARTITIONING(!fast_alter_partition, 1))
+  if (!alter_ctx.fast_alter_partition)
     Create_field::upgrade_data_types(alter_info->create_list);
 
   if (create_info->check_fields(thd, alter_info,
@@ -10996,7 +11019,7 @@ do_continue:;
     promote_first_timestamp_column(&alter_info->create_list);
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
-  if (fast_alter_partition)
+  if (alter_ctx.fast_alter_partition)
   {
     /*
       ALGORITHM and LOCK clauses are generally not allowed by the
@@ -12077,7 +12100,7 @@ static int online_alter_read_from_binlog(THD *thd, rpl_group_info *rgi,
   do
   {
     const auto *descr_event= rgi->rli->relay_log.description_event_for_exec;
-    auto *ev= Log_event::read_log_event(log_file, descr_event, 0, 1, ~0UL);
+    auto *ev= Log_event::read_log_event(log_file, &error, descr_event, 0, 1, ~0UL);
     error= log_file->error;
     if (unlikely(!ev))
     {
@@ -12836,14 +12859,15 @@ bool mysql_checksum_table(THD *thd, TABLE_LIST *tables,
         protocol->store_null();
       else
       {
+        DEBUG_SYNC(thd, "mysql_checksum_table_before_calculate_checksum");
         int error= t->file->calculate_checksum();
+        DEBUG_SYNC(thd, "mysql_checksum_table_after_calculate_checksum");
         if (thd->killed)
         {
           /*
              we've been killed; let handler clean up, and remove the
              partial current row from the recordset (embedded lib)
           */
-          t->file->ha_rnd_end();
           thd->protocol->remove_last_row();
           goto err;
         }
