@@ -9060,6 +9060,7 @@ fk_check_column_changes(THD *thd, const TABLE *table,
 
   *bad_column_name= NULL;
   enum fk_column_change_type result= FK_COLUMN_NO_CHANGE;
+  bool strict_mode= thd->is_strict_mode();
 
   while ((column= column_it++))
   {
@@ -9105,7 +9106,7 @@ fk_check_column_changes(THD *thd, const TABLE *table,
         goto func_exit;
       }
 
-      if (old_field_not_null != new_field_not_null)
+      if (strict_mode && old_field_not_null != new_field_not_null)
       {
         if (referenced && !new_field_not_null)
         {
@@ -11883,14 +11884,15 @@ bool mysql_checksum_table(THD *thd, TABLE_LIST *tables,
         protocol->store_null();
       else
       {
+        DEBUG_SYNC(thd, "mysql_checksum_table_before_calculate_checksum");
         int error= t->file->calculate_checksum();
+        DEBUG_SYNC(thd, "mysql_checksum_table_after_calculate_checksum");
         if (thd->killed)
         {
           /*
              we've been killed; let handler clean up, and remove the
              partial current row from the recordset (embedded lib)
           */
-          t->file->ha_rnd_end();
           thd->protocol->remove_last_row();
           goto err;
         }
