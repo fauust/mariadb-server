@@ -2285,9 +2285,14 @@ int ha_rollback_trans(THD *thd, bool all)
         my_error(ER_ERROR_DURING_ROLLBACK, MYF(0), err);
         error=1;
 #ifdef WITH_WSREP
-        WSREP_WARN("handlerton rollback failed, thd %lld %lld conf %d SQL %s",
-                   thd->thread_id, thd->query_id, thd->wsrep_trx().state(),
-                   thd->query());
+        if (WSREP(thd))
+        {
+          WSREP_WARN("handlerton rollback failed, thd %lld %lld "
+                     "conf %d wsrep_err %s SQL %s",
+                     thd->thread_id, thd->query_id, thd->wsrep_trx().state(),
+                     wsrep::to_c_string(thd->wsrep_cs().current_error()),
+                     thd->query());
+        }
 #endif /* WITH_WSREP */
       }
       status_var_increment(thd->status_var.ha_rollback_count);
@@ -2299,11 +2304,12 @@ int ha_rollback_trans(THD *thd, bool all)
   }
 
 #ifdef WITH_WSREP
-  if (thd->is_error())
+  if (WSREP(thd) && thd->is_error())
   {
-    WSREP_DEBUG("ha_rollback_trans(%lld, %s) rolled back: %s: %s; is_real %d",
-                thd->thread_id, all?"TRUE":"FALSE", wsrep_thd_query(thd),
-                thd->get_stmt_da()->message(), is_real_trans);
+    WSREP_DEBUG("ha_rollback_trans(%lld, %s) rolled back: msg %s is_real %d wsrep_err %s",
+                thd->thread_id, all? "TRUE" : "FALSE",
+                thd->get_stmt_da()->message(), is_real_trans,
+                wsrep::to_c_string(thd->wsrep_cs().current_error()));
   }
 
   // REPLACE|INSERT INTO ... SELECT uses TOI in consistency check
@@ -5931,7 +5937,10 @@ int handler::calculate_checksum()
   for (;;)
   {
     if (thd->killed)
-      return HA_ERR_ABORTED_BY_USER;
+    {
+      error= HA_ERR_ABORTED_BY_USER;
+      break;
+    }
 
     ha_checksum row_crc= 0;
     error= ha_rnd_next(table->record[0]);
@@ -7740,6 +7749,7 @@ int handler::ha_write_row(const uchar *buf)
 
   TABLE_IO_WAIT(tracker, PSI_TABLE_WRITE_ROW, MAX_KEY, error,
                       { error= write_row(buf); })
+  DBUG_PRINT("dml", ("INSERT: %s = %d", dbug_print_row(table, buf, false), error));
 
   MYSQL_INSERT_ROW_DONE(error);
   if (likely(!error))
@@ -7800,6 +7810,8 @@ int handler::ha_update_row(const uchar *old_data, const uchar *new_data)
 
   TABLE_IO_WAIT(tracker, PSI_TABLE_UPDATE_ROW, active_index, 0,
                       { error= update_row(old_data, new_data);})
+  DBUG_PRINT("dml", ("UPDATE: %s => %s = %d", dbug_print_row(table, old_data, false),
+                     dbug_print_row(table, new_data, false), error));
 
   MYSQL_UPDATE_ROW_DONE(error);
   if (likely(!error))
@@ -7879,6 +7891,7 @@ int handler::ha_delete_row(const uchar *buf)
 
   TABLE_IO_WAIT(tracker, PSI_TABLE_DELETE_ROW, active_index, error,
     { error= delete_row(buf);})
+  DBUG_PRINT("dml", ("DELETE: %s = %d", dbug_print_row(table, buf, false), error));
   MYSQL_DELETE_ROW_DONE(error);
   if (likely(!error))
   {
