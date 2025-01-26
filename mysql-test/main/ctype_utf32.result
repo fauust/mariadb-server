@@ -3189,4 +3189,6 @@ SET NAMES utf8mb3, character_set_connection=utf32;
 SELECT CONV('-AzL8n0Y58m8', -62, -10);
 CONV('-AzL8n0Y58m8', -62, -10)
 -9223372036854775808
+#
 # End of 11.4 tests
+#
