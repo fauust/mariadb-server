@@ -3137,6 +3137,13 @@ public:
   Explain_query *explain;
 
   /*
+    If true, query optimizer has encountered an unrecoverable error when doing
+    once-per-statement optimization and it is not safe to re-execute this
+    statement.
+  */
+  bool needs_reprepare{false};
+
+  /*
     LEX which represents current statement (conventional, SP or PS)
 
     For example during view parsing THD::lex will point to the views LEX and
@@ -4609,7 +4616,11 @@ public:
       case SQLCOM_LOAD:
         return duplicates == DUP_REPLACE;
       default:
-        return false;
+        /*
+          Row injections (i.e. row binlog events and BINLOG statements) should
+          generate history.
+        */
+        return is_stmt_row_injection();
     }
   }
 

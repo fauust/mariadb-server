@@ -22,9 +22,9 @@ insert t1 values (1, 1.1);
 insert t1 values (1, 1e1);
 --error ER_ILLEGAL_PARAMETER_DATA_TYPES2_FOR_OPERATION
 insert t1 values (1, now());
---error ER_TRUNCATED_WRONG_VALUE_FOR_FIELD
+--error ER_TRUNCATED_WRONG_VALUE
 insert t1 values (1, repeat(x'56', 10));
---error ER_TRUNCATED_WRONG_VALUE_FOR_FIELD
+--error ER_TRUNCATED_WRONG_VALUE
 insert t1 values (1, repeat(x'66', 40));
 insert t1 values (1, repeat(x'56', 40));
 select * from t1;
@@ -155,7 +155,7 @@ drop table t1;
 --echo #
 create table t1 (a blob);
 insert t1 values (1);
---error ER_TRUNCATED_WRONG_VALUE_FOR_FIELD
+--error ER_TRUNCATED_WRONG_VALUE
 alter table t1 modify a vector(2);
 update t1 set a=x'5555555555555555';
 alter table t1 modify a vector(2);
@@ -289,4 +289,32 @@ flush tables;
 update t set v = 1;
 drop table t;
 
+--echo #
+--echo # MDEV-35792 Adding a regular index on a vector column leads to invalid table structure
+--echo #
+--error ER_TOO_LONG_KEY
+create table t (v vector(800), key(v));
+create table t (v vector(8), key(v));
+show create table t;
+drop table t;
+
+
+--echo #
+--echo # MDEV-35146 Vector-related error messages worth improving when possible
+--echo #
+--error ER_INVALID_DEFAULT
+create table t (a vector(64) not null default '');
+show warnings;
+--error ER_INVALID_DEFAULT
+create table t (a inet6 not null default '');
+show warnings;
+
+--echo #
+--echo # MDEV-35186 IGNORED attribute has no effect on vector keys
+--echo #
+create table t (a vector(1) not null, vector(a) ignored);
+show index in t;
+insert into t values (0x00000000),(0x00000000);
+explain select vec_totext(a) from t order by vec_distance_euclidean(a,0x00000000) limit 1;
+drop table t;
 --echo # End of 11.7 tests
